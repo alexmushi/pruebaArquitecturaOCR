@@ -7,7 +7,9 @@
 
   <ItemGroup>
     <PackageReference Include="Adobe.PDFServicesSDK" Version="4.1.0" />
+    <PackageReference Include="DotNetEnv" Version="3.1.1" />
     <PackageReference Include="log4net" Version="2.0.17" />
+    <PackageReference Include="UglyToad.PdfPig" Version="1.7.0-custom-5" />
   </ItemGroup>
 
   <ItemGroup>

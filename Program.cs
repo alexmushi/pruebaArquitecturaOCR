@@ -1,14 +1,7 @@
-﻿/*
- * Copyright 2024 Adobe
- * All Rights Reserved.
- *
- * NOTICE: Adobe permits you to use, modify, and distribute this file in 
- * accordance with the terms of the Adobe license agreement accompanying it.
- */
-
-using System;
+﻿using System;
 using System.IO;
 using System.Reflection;
+using System.Text.Json;
 using Adobe.PDFServicesSDK;
 using Adobe.PDFServicesSDK.auth;
 using Adobe.PDFServicesSDK.exception;
@@ -18,14 +11,10 @@ using Adobe.PDFServicesSDK.pdfjobs.results;
 using log4net;
 using log4net.Config;
 using log4net.Repository;
+using UglyToad.PdfPig;
+using UglyToad.PdfPig.Content;
+using DotNetEnv;
 
-/// <summary>
-/// This sample illustrates how to perform OCR operation on a PDF file and convert it into a searchable PDF file.
-/// <para/>
-/// Note that OCR operation on a PDF file results in a PDF file.
-/// <para/>
-/// Refer to README.md for instructions on how to run the samples.
-/// </summary>
 namespace OcrPDF
 {
     class Program
@@ -34,60 +23,65 @@ namespace OcrPDF
 
         static void Main()
         {
-            //Configure the logging
             ConfigureLogging();
+
+            string outputFilePath = "";
+
             try
             {
-                // Initial setup, create credentials instance
-                ICredentials credentials = new ServicePrincipalCredentials(
-                    Environment.GetEnvironmentVariable("PDF_SERVICES_CLIENT_ID"),
-                    Environment.GetEnvironmentVariable("PDF_SERVICES_CLIENT_SECRET"));
+                // Leer credenciales desde el archivo .env
+                Env.Load();
+                var clientId = Environment.GetEnvironmentVariable("CLIENT_ID");
+                var clientSecret = Environment.GetEnvironmentVariable("CLIENT_SECRET");
 
-                // Creates a PDF Services instance
+                // Validar que no estén vacías
+                if (string.IsNullOrEmpty(clientId) || string.IsNullOrEmpty(clientSecret))
+                    throw new Exception("Las variables de entorno CLIENT_ID o CLIENT_SECRET no están definidas.");
+
+                // Crear instancia de credenciales
+                ICredentials credentials = new ServicePrincipalCredentials(clientId, clientSecret);
+
                 PDFServices pdfServices = new PDFServices(credentials);
 
-                // Creates an asset(s) from source file(s) and upload
-                using Stream inputStream = File.OpenRead(@"ocrInput.pdf");
+                // Subir archivo de entrada
+                using Stream inputStream = File.OpenRead("ocrInput.pdf");
                 IAsset asset = pdfServices.Upload(inputStream, PDFServicesMediaType.PDF.GetMIMETypeValue());
 
-                // Creates a new job instance
+                // Crear y enviar el trabajo de OCR
                 OCRJob ocrJob = new OCRJob(asset);
+                string location = pdfServices.Submit(ocrJob);
+                PDFServicesResponse<OCRResult> pdfServicesResponse = pdfServices.GetJobResult<OCRResult>(location, typeof(OCRResult));
 
-                // Submits the job and gets the job result
-                String location = pdfServices.Submit(ocrJob);
-                PDFServicesResponse<OCRResult> pdfServicesResponse =
-                    pdfServices.GetJobResult<OCRResult>(location, typeof(OCRResult));
-
-                // Get content from the resulting asset(s)
+                // Obtener el contenido del resultado
                 IAsset resultAsset = pdfServicesResponse.Result.Asset;
                 StreamAsset streamAsset = pdfServices.GetContent(resultAsset);
 
-                // Creating output streams and copying stream asset's content to it
-                String outputFilePath = CreateOutputFilePath();
+                // Guardar el archivo PDF resultante
+                outputFilePath = CreateOutputFilePath();
                 new FileInfo(Directory.GetCurrentDirectory() + outputFilePath).Directory.Create();
-                Stream outputStream = File.OpenWrite(Directory.GetCurrentDirectory() + outputFilePath);
+                using Stream outputStream = File.OpenWrite(Directory.GetCurrentDirectory() + outputFilePath);
                 streamAsset.Stream.CopyTo(outputStream);
-                outputStream.Close();
             }
-            catch (ServiceUsageException ex)
+            catch (ServiceUsageException ex) { log.Error("ServiceUsageException", ex); }
+            catch (ServiceApiException ex) { log.Error("ServiceApiException", ex); }
+            catch (SDKException ex) { log.Error("SDKException", ex); }
+            catch (IOException ex) { log.Error("IOException", ex); }
+            catch (Exception ex) { log.Error("General Exception", ex); }
+
+            // Si el archivo se generó exitosamente, revisa si contiene "INE"
+            if (!string.IsNullOrEmpty(outputFilePath) && File.Exists(Directory.GetCurrentDirectory() + outputFilePath))
             {
-                log.Error("Exception encountered while executing operation", ex);
-            }
-            catch (ServiceApiException ex)
-            {
-                log.Error("Exception encountered while executing operation", ex);
-            }
-            catch (SDKException ex)
-            {
-                log.Error("Exception encountered while executing operation", ex);
-            }
-            catch (IOException ex)
-            {
-                log.Error("Exception encountered while executing operation", ex);
-            }
-            catch (Exception ex)
-            {
-                log.Error("Exception encountered while executing operation", ex);
+                string fullPath = Directory.GetCurrentDirectory() + outputFilePath;
+                string text = ExtractTextFromPdf(fullPath);
+
+                if (text.Contains("ELECTORAL", StringComparison.OrdinalIgnoreCase))
+                {
+                    Console.WriteLine($"Parece ser un INE");
+                }
+                else
+                {
+                    Console.WriteLine("No se detectó un INE");
+                }
             }
         }
 
@@ -97,11 +91,21 @@ namespace OcrPDF
             XmlConfigurator.Configure(logRepository, new FileInfo("log4net.config"));
         }
 
-        // Generates a string containing a directory structure and file name for the output file.
-        private static String CreateOutputFilePath()
+        private static string CreateOutputFilePath()
         {
-            String timeStamp = DateTime.Now.ToString("yyyy'-'MM'-'dd'T'HH'-'mm'-'ss");
-            return ("/output/ocr" + timeStamp + ".pdf");
+            string timeStamp = DateTime.Now.ToString("yyyy-MM-ddTHH-mm-ss");
+            return $"/output/ocr_{timeStamp}.pdf";
+        }
+
+        private static string ExtractTextFromPdf(string filePath)
+        {
+            using var document = PdfDocument.Open(filePath);
+            var text = "";
+            foreach (Page page in document.GetPages())
+            {
+                text += page.Text;
+            }
+            return text;
         }
     }
 }

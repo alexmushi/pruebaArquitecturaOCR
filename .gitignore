@@ -400,3 +400,9 @@ FodyWeavers.xsd
 *.sln.iml
 
 .env
+
+output/*
+
+# Pero NO ignorar la carpeta misma (y tampoco un archivo especial como .gitkeep)
+!output/
+
